@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, reactive, computed, shallowRef, triggerRef } from 'vue';
 import { useConfigStore } from './config';
+import { categorizeTokenError } from '@/api';
 import { RESULT_CATEGORIES } from '@/constants';
 
 /**
@@ -34,7 +35,7 @@ const displayTextFormatters = {
         const safeToken = escapeHtml(res.token);
         const bal = res.balance;
         const balClass = bal >= 10 ? "high" : bal > 0 ? "medium" : "low";
-        return `${safeToken} <span class="message">(余额: <span class="balance-${balClass}">${escapeHtml(bal)} / ${escapeHtml(res.totalBalance)}</span>)</span>`;
+        return `${safeToken} <span class="message">(余额：<span class="balance-${balClass}">${escapeHtml(bal)} / ${escapeHtml(res.totalBalance)}</span>)</span>`;
     },
     /**
      * @description DeepSeek 提供商的余额显示格式化。
@@ -45,7 +46,7 @@ const displayTextFormatters = {
         const bal = res.balance;
         const balClass = bal >= 10 ? "high" : bal > 0 ? "medium" : "low";
         const balanceDisplay = res.currency === 'USD' ? `$${res.balance.toFixed(2)}` : `${res.balance} ${escapeHtml(res.currency)}`;
-        return `${safeToken} <span class="message">(余额: <span class="balance-${balClass}">${escapeHtml(balanceDisplay)}</span> | 赠送: ${escapeHtml(res.grantedBalance)} | 充值: ${escapeHtml(res.toppedUpBalance)})</span>`;
+        return `${safeToken} <span class="message">(余额：<span class="balance-${balClass}">${escapeHtml(balanceDisplay)}</span> | 赠送：${escapeHtml(res.grantedBalance)} | 充值：${escapeHtml(res.toppedUpBalance)})</span>`;
     },
     /**
      * @description 默认的余额显示格式化，适用于大多数提供商。
@@ -66,16 +67,16 @@ const displayTextFormatters = {
         let extraInfo = '';
         if (res.totalGranted !== undefined) {
             const grantedDisplay = res.currency === 'USD' ? `$${res.totalGranted.toFixed(2)}` : res.totalGranted;
-            extraInfo += ` | 总额: ${escapeHtml(grantedDisplay)}`;
+            extraInfo += ` | 总额：${escapeHtml(grantedDisplay)}`;
         }
         if (res.expiresAt !== undefined) {
             const expiresDate = res.expiresAt === 0
                 ? '永不'
                 : new Date(res.expiresAt * 1000).toLocaleDateString();
-            extraInfo += ` | 过期: ${escapeHtml(expiresDate)}`;
+            extraInfo += ` | 过期：${escapeHtml(expiresDate)}`;
         }
 
-        return `${safeToken} <span class="message">(余额: <span class="balance-${balClass}">${escapeHtml(balanceDisplay)}</span>${extraInfo})</span>`;
+        return `${safeToken} <span class="message">(余额：<span class="balance-${balClass}">${escapeHtml(balanceDisplay)}</span>${extraInfo})</span>`;
     },
     /**
      * @description 没有余额信息的提供商的显示格式化。
@@ -83,7 +84,7 @@ const displayTextFormatters = {
      */
     noBalance: (res) => {
         const safeToken = escapeHtml(res.token);
-        return `${safeToken} <span class="message">(状态: 有效)</span>`;
+        return `${safeToken} <span class="message">(有效)</span>`;
     }
 };
 
@@ -107,7 +108,6 @@ export const useResultsStore = defineStore('results', () => {
         valid: shallowRef([]),
         lowBalance: shallowRef([]),
         zeroBalance: shallowRef([]),
-        noQuota: shallowRef([]),
         rateLimit: shallowRef([]),
         invalid: shallowRef([]),
         duplicate: shallowRef([]),
@@ -115,7 +115,7 @@ export const useResultsStore = defineStore('results', () => {
 
     /** @type {Reactive<object>} 各个结果类别的搜索关键词。*/
     const searchTerms = reactive({
-        valid: '', lowBalance: '', zeroBalance: '', noQuota: '', rateLimit: '', invalid: '', duplicate: '',
+        valid: '', lowBalance: '', zeroBalance: '', rateLimit: '', invalid: '', duplicate: '',
     });
 
     /** @type {Reactive<object>} 各个结果类别的排序状态。*/
@@ -243,14 +243,19 @@ export const useResultsStore = defineStore('results', () => {
         }
         // 处理无效 Key 的情况
         if (!res.isValid) {
-            const safeMessage = escapeHtml(res.message || '未知错误');
-            return `${safeToken} <span class="message">(${safeMessage})</span>`;
+            const { simpleMessage } = categorizeTokenError(res);
+            return `${safeToken} <span class="message">(${escapeHtml(simpleMessage)})</span>`;
         }
 
         const configStore = getConfigStore();
         // 如果提供商没有余额概念，则使用无余额格式化
         if (!configStore.providers[provider].hasBalance) {
             return displayTextFormatters.noBalance(res);
+        }
+
+        const isBalanceUnavailable = res.balance === -1 || res.message === '有效但无法获取余额';
+        if (isBalanceUnavailable) {
+            return `${safeToken} <span class="message">(余额：未知)</span>`;
         }
 
         // 根据提供商选择对应的格式化函数，如果没有则使用默认格式化

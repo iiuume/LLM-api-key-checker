@@ -325,8 +325,9 @@ export const useCheckerStore = defineStore('checker', () => {
         res.finalCategory = category;
 
         if (res.isValid && configStore.providers[configStore.currentProvider].hasBalance) {
+            const isBalanceUnavailable = res.balance === -1 || res.message === '有效但无法获取余额';
             if (res.balance === 0) res.finalCategory = 'zeroBalance';
-            else if (res.balance < configStore.threshold) res.finalCategory = 'lowBalance';
+            else if (!isBalanceUnavailable && res.balance < configStore.threshold) res.finalCategory = 'lowBalance';
             else res.finalCategory = 'valid';
         }
 
@@ -352,7 +353,6 @@ export const useCheckerStore = defineStore('checker', () => {
             valid: '有效',
             lowBalance: '低额',
             zeroBalance: '零额',
-            noQuota: '无额',
             rateLimit: '限流',
             invalid: '无效',
             duplicate: '重复'

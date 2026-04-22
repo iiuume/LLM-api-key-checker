@@ -34,75 +34,73 @@ export async function fetchModels(token, providerConfig) {
     return response.json();
 }
 
-/**
- * @description 后端 errorCategory 到前端分类的映射表。
- */
-const ERROR_CATEGORY_MAP = {
-    'invalid_key': { category: 'invalid', simpleMessage: 'API Key 无效' },
-    'account_banned': { category: 'invalid', simpleMessage: '账户已被封禁或停用' },
-    'no_quota': { category: 'noQuota', simpleMessage: '额度不足' },
-    'rate_limit': { category: 'rateLimit', simpleMessage: '请求频繁' },
-    'permission_denied': { category: 'invalid', simpleMessage: '权限不足' },
-    'region_blocked': { category: 'invalid', simpleMessage: '区域限制' },
-    'model_not_found': { category: 'invalid', simpleMessage: '模型不存在或不可用' },
-};
 
 /**
- * @description 根据 API Key 检测结果的原始响应，将其归类到不同的错误类别。
- * 优先使用后端返回的 errorCategory，回退到本地解析逻辑。
+ * @description 旧数据兼容用的最小兜底文案归一化。
  * @param {object} res - API Key 检测的原始结果对象。
- * @returns {{category: string, simpleMessage: string}} - 包含分类和简单消息的对象。
+ * @returns {{category: string, simpleMessage: string}|null}
  */
-export function categorizeTokenError(res) {
-    if (!res || res.isValid) return { category: "valid", simpleMessage: "有效" };
+function normalizeLegacyError(res) {
+    const status = res.rawError?.status || 0;
+    const lowerCaseMessage = (res.message || JSON.stringify(res.rawError) || '').toLowerCase();
 
-    // 优先使用后端返回的 errorCategory
-    if (res.errorCategory && ERROR_CATEGORY_MAP[res.errorCategory]) {
-        return ERROR_CATEGORY_MAP[res.errorCategory];
-    }
-
-    // 回退：本地解析逻辑（兼容旧数据或后端未分类的情况）
-    const { rawError, message } = res;
-    const status = rawError?.status || 0;
-    const lowerCaseMessage = (message || JSON.stringify(rawError) || "").toLowerCase();
-    const errorContent = rawError?.content || {};
-    const errorCode = errorContent?.error?.code || errorContent?.code;
-    const errorType = errorContent?.error?.type || errorContent?.type;
-
-    if (status === 401 || errorCode === 'invalid_api_key' || errorType === 'invalid_api_key') {
-        return { category: "invalid", simpleMessage: "API_KEY 无效" };
-    }
-    if (errorType === 'access_terminated') {
-        return { category: "invalid", simpleMessage: "账户已被封禁或停用" };
-    }
-    if (status === 402) {
-        return { category: "noQuota", simpleMessage: "额度不足 (Payment Required)" };
-    }
-    if (errorCode === 'insufficient_quota' || errorType === 'insufficient_quota') {
-        return { category: "noQuota", simpleMessage: "额度已耗尽或超出配额" };
+    if (status === 429 || lowerCaseMessage.includes('rate limit') || lowerCaseMessage.includes('too many requests')) {
+        return { category: 'rateLimit', simpleMessage: '请求频繁' };
     }
     if (lowerCaseMessage.includes("doesn't have a free quota tier")) {
-        return { category: 'noQuota', simpleMessage: '该模型没有免费额度' };
+        return { category: 'invalid', simpleMessage: '无免费额度' };
     }
-    const quotaKeywords = ['insufficient', 'credit', 'quota', 'balance', 'billing', 'paid', 'top up'];
-    if (quotaKeywords.some(kw => lowerCaseMessage.includes(kw))) {
-        return { category: 'noQuota', simpleMessage: '额度/余额不足' };
+    if (
+        lowerCaseMessage.includes('insufficient') ||
+        lowerCaseMessage.includes('quota') ||
+        lowerCaseMessage.includes('balance') ||
+        lowerCaseMessage.includes('billing') ||
+        lowerCaseMessage.includes('paid') ||
+        lowerCaseMessage.includes('top up') ||
+        lowerCaseMessage.includes('recharge') ||
+        lowerCaseMessage.includes('credit')
+    ) {
+        return { category: 'invalid', simpleMessage: '额度不足' };
     }
-    if (status === 429) {
-        return { category: "rateLimit", simpleMessage: "请求频繁 (Rate Limit)" };
+    if (lowerCaseMessage.includes('invalid_api_key') || lowerCaseMessage.includes('api key 无效') || status === 401) {
+        return { category: 'invalid', simpleMessage: 'Key 无效' };
     }
-    if (lowerCaseMessage.includes('location is not supported')) {
-        return { category: "invalid", simpleMessage: "区域不支持" };
+    if (lowerCaseMessage.includes('terminated') || lowerCaseMessage.includes('banned')) {
+        return { category: 'invalid', simpleMessage: '账号停用' };
     }
-    if (lowerCaseMessage.includes('permissiondenied')) {
-        return { category: "invalid", simpleMessage: "API未在项目中启用" };
+    if (lowerCaseMessage.includes('location') || lowerCaseMessage.includes('region') || lowerCaseMessage.includes('country')) {
+        return { category: 'invalid', simpleMessage: '区域受限' };
     }
-    if (errorCode === 'model_not_found' || lowerCaseMessage.includes('model is not supported')) {
-        return { category: 'invalid', simpleMessage: '模型不存在或不可用' };
+    if (lowerCaseMessage.includes('permission') || lowerCaseMessage.includes('forbidden')) {
+        return { category: 'invalid', simpleMessage: '权限不足' };
     }
-    if (status === 403) {
-        return { category: "invalid", simpleMessage: "访问被拒绝 (Forbidden)" };
+    if (lowerCaseMessage.includes('model') && (lowerCaseMessage.includes('not found') || lowerCaseMessage.includes('not supported') || lowerCaseMessage.includes('不可用'))) {
+        return { category: 'invalid', simpleMessage: '模型不可用' };
     }
 
-    return { category: "invalid", simpleMessage: "验证失败" };
+    return null;
+}
+
+/**
+ * @description 根据 API Key 检测结果归类结果桶，并生成结果区短文案。
+ * 优先使用后端返回的 errorCategory 和 message，前端仅保留最小兜底逻辑。
+ * @param {object} res - API Key 检测的原始结果对象。
+ * @returns {{category: string, simpleMessage: string}} - 包含分类和短文案的对象。
+ */
+export function categorizeTokenError(res) {
+    if (!res || res.isValid) return { category: 'valid', simpleMessage: '有效' };
+
+    if (res.errorCategory) {
+        return {
+            category: res.errorCategory === 'rate_limit' ? 'rateLimit' : 'invalid',
+            simpleMessage: res.message || '验证失败'
+        };
+    }
+
+    const legacyResult = normalizeLegacyError(res);
+    if (legacyResult) {
+        return legacyResult;
+    }
+
+    return { category: 'invalid', simpleMessage: res.message || '验证失败' };
 }

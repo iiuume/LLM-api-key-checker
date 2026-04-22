@@ -9,10 +9,22 @@ export type ResultCategory =
   | 'valid'
   | 'lowBalance'
   | 'zeroBalance'
-  | 'noQuota'
   | 'rateLimit'
   | 'invalid'
   | 'duplicate';
+
+/**
+ * 错误分类结果
+ */
+export type ErrorCategory =
+  | 'invalid_key'
+  | 'account_banned'
+  | 'no_quota'
+  | 'rate_limit'
+  | 'permission_denied'
+  | 'region_blocked'
+  | 'model_not_found'
+  | 'unknown';
 
 /**
  * 单个 API Key 的检测结果
@@ -38,10 +50,12 @@ export interface CheckResult {
   grantedBalance?: number;
   /** 充值余额 */
   toppedUpBalance?: number;
-  /** 过期时间 */
-  expiresAt?: string;
+  /** 过期时间（Unix 时间戳，秒） */
+  expiresAt?: number;
   /** 原始 API 响应 */
   rawResponse?: unknown;
+  /** 后端错误分类 */
+  errorCategory?: ErrorCategory;
   /** 原始错误信息 */
   rawError?: {
     status: number;

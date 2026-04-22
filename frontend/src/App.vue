@@ -2,6 +2,7 @@
 import { onMounted, onBeforeUnmount, watch, ref, computed } from 'vue';
 import { useUiStore } from '@/stores/ui';
 import { useCheckerStore } from '@/stores/checker';
+import { RESULT_TAB_CONFIG } from '@/constants';
 
 // 导入组件
 import ProviderSelector from './components/ProviderSelector.vue';
@@ -16,15 +17,7 @@ import ModalContainer from './components/ModalContainer.vue';
 /**
  * @description 结果标签页的配置数组。
  */
-const resultTabsConfig = [
-    { id: 'valid', name: '有效', sortable: true },
-    { id: 'lowBalance', name: '低额', sortable: true },
-    { id: 'zeroBalance', name: '零额', sortable: false },
-    { id: 'noQuota', name: '无额', sortable: false },
-    { id: 'rateLimit', name: '限流', sortable: false },
-    { id: 'invalid', name: '无效', sortable: false },
-    { id: 'duplicate', name: '重复', sortable: false },
-];
+const resultTabsConfig = RESULT_TAB_CONFIG;
 
 const uiStore = useUiStore();
 const checkerStore = useCheckerStore();

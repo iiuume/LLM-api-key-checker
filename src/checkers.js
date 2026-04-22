@@ -121,26 +121,40 @@ async function handleApiError(response) {
     const lowerCaseContent = JSON.stringify(rawErrorContent).toLowerCase();
 
     // 优先级从高到低进行错误分类
-    if (response.status === 401 || code === 'invalid_api_key' || errorType === 'invalid_api_key') {
-        message = "API Key 无效或格式错误";
-        errorCategory = 'invalid_key';
-    } else if (errorType === 'access_terminated' || lowerCaseContent.includes('terminated') || lowerCaseContent.includes('banned')) {
-        message = "账户已被封禁或停用";
-        errorCategory = 'account_banned';
-    } else if (response.status === 402 || code === 'insufficient_quota' || errorType === 'insufficient_quota') {
+    if (lowerCaseContent.includes("doesn't have a free quota tier")) {
+        message = "无免费额度";
+        errorCategory = 'no_quota';
+    } else if (
+        response.status === 402 ||
+        code === 'insufficient_quota' ||
+        code === 'insufficient_user_quota' ||
+        errorType === 'insufficient_quota' ||
+        lowerCaseContent.includes('insufficient') ||
+        lowerCaseContent.includes('quota') ||
+        lowerCaseContent.includes('balance') ||
+        lowerCaseContent.includes('billing') ||
+        lowerCaseContent.includes('recharge') ||
+        lowerCaseContent.includes('credit')
+    ) {
         message = "额度不足";
         errorCategory = 'no_quota';
+    } else if (response.status === 401 || code === 'invalid_api_key' || errorType === 'invalid_api_key') {
+        message = "Key 无效";
+        errorCategory = 'invalid_key';
+    } else if (errorType === 'access_terminated' || lowerCaseContent.includes('terminated') || lowerCaseContent.includes('banned')) {
+        message = "账号停用";
+        errorCategory = 'account_banned';
     } else if (response.status === 429) {
-        message = "请求频繁 (Rate Limit)";
+        message = "请求频繁";
         errorCategory = 'rate_limit';
     } else if (response.status === 403 || lowerCaseContent.includes('permission') || lowerCaseContent.includes('forbidden')) {
-        message = "访问被拒绝 (权限不足)";
+        message = "权限不足";
         errorCategory = 'permission_denied';
     } else if (lowerCaseContent.includes('location') || lowerCaseContent.includes('region') || lowerCaseContent.includes('country')) {
-        message = "区域限制";
+        message = "区域受限";
         errorCategory = 'region_blocked';
     } else if (code === 'model_not_found' || lowerCaseContent.includes('model') && lowerCaseContent.includes('not found')) {
-        message = "模型不存在或不可用";
+        message = "模型不可用";
         errorCategory = 'model_not_found';
     } else if (reason) {
         message = String(reason);
@@ -185,11 +199,31 @@ async function _checkTokenTemplate(token, providerMeta, providerConfig, env, str
 
         if (response.ok) {
             let result = { token, isValid: true };
-            if (enableStream) {
+            const contentType = response.headers.get('content-type') || '';
+
+            if (enableStream || contentType.includes('text/event-stream')) {
                 const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let hasValidEvent = false;
+
                 try {
-                    const { done } = await reader.read();
-                    if (done) return { token, isValid: false, message: "验证失败 (流提前结束)", error: true };
+                    // 读取前几个 chunk 验证流式响应有效性
+                    for (let i = 0; i < 3; i++) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        const chunk = decoder.decode(value, { stream: true });
+                        // 检测有效的 SSE 事件（response.created, response.output_text.delta 等）
+                        if (chunk.includes('event:') || chunk.includes('data:')) {
+                            hasValidEvent = true;
+                            break;
+                        }
+                    }
+
+                    if (!hasValidEvent) {
+                        return { token, isValid: false, message: "验证失败", errorCategory: 'unknown', error: true };
+                    }
+
                     result.rawResponse = { note: "Validation successful via streaming." };
                 } finally {
                     try {
@@ -204,7 +238,15 @@ async function _checkTokenTemplate(token, providerMeta, providerConfig, env, str
                     }
                 }
             } else {
-                result.rawResponse = await response.json().catch(() => ({ note: "Failed to parse JSON response." }));
+                const text = await response.text();
+                try {
+                    result.rawResponse = JSON.parse(text);
+                } catch {
+                    result.rawResponse = {
+                        note: "Non-JSON response",
+                        preview: text.slice(0, 200)
+                    };
+                }
             }
 
             if (providerMeta.balanceCheck && balanceCheckers[providerMeta.balanceCheck]) {
@@ -223,10 +265,10 @@ async function _checkTokenTemplate(token, providerMeta, providerConfig, env, str
             }
         }
 
-        return { token, isValid: false, message: error.message, rawError: error.rawError, error: true };
+        return { token, isValid: false, message: error.message, errorCategory: error.errorCategory, rawError: error.rawError, error: true };
 
     } catch (error) {
-        return { token, isValid: false, message: "网络错误或未知异常", rawError: { content: error.message }, error: true };
+        return { token, isValid: false, message: "网络错误或未知异常", errorCategory: 'unknown', rawError: { status: 0, content: error.message }, error: true };
     }
 }
 
@@ -268,11 +310,26 @@ const apiStrategies = {
             const headers = { "Content-Type": "application/json", Authorization: "Bearer " + token };
             const body = {
                 model,
-                input: validationPrompt || "You just need to reply Hi.",
+                instructions: "You are a helpful assistant.",
+                input: [{ role: "user", content: validationPrompt || "You just need to reply Hi." }],
                 max_output_tokens: validationMaxOutputTokens || 16,
+                store: false,
                 stream: enableStream || false
             };
             return { url: apiUrl, options: { method: "POST", headers, body: JSON.stringify(body) } };
+        },
+        onFail: async (error, token, providerConfig, env) => {
+            const detail = error.rawError?.content?.detail || '';
+            if (typeof detail === 'string' && detail.toLowerCase().includes('unsupported parameter')) {
+                const { url, options } = apiStrategies.openai_responses.buildRequest(token, providerConfig);
+                const newBody = JSON.parse(options.body);
+                delete newBody.max_output_tokens;
+                delete newBody.store;
+                options.body = JSON.stringify(newBody);
+                const retryStrategy = { buildRequest: () => ({ url, options }) };
+                return await _checkTokenTemplate(token, {}, providerConfig, env, retryStrategy);
+            }
+            return null;
         }
     },
     anthropic: {
@@ -371,7 +428,7 @@ export async function checkToken(token, providerMeta, providerConfig, env) {
             checkerFunction = checkTavilyToken;
             break;
         default:
-            return { token, isValid: false, message: "不支持的提供商类型", error: true };
+            return { token, isValid: false, message: "验证失败", errorCategory: 'unknown', error: true };
     }
     return await checkerFunction(token, providerMeta, providerConfig, env);
 }

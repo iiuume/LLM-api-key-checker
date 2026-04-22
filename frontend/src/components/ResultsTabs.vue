@@ -12,6 +12,7 @@
 import { computed } from 'vue';
 import { useResultsStore } from '@/stores/results';
 import { useConfigStore } from '@/stores/config';
+import { RESULT_TAB_CONFIG } from '@/constants';
 
 const resultsStore = useResultsStore();
 const configStore = useConfigStore();
@@ -22,15 +23,11 @@ const configStore = useConfigStore();
  */
 const resultTabs = computed(() => {
     const hasBalance = configStore.providers[configStore.currentProvider].hasBalance;
-    return [
-        { id: 'valid', name: '有效', visible: true },
-        { id: 'lowBalance', name: '低额', visible: hasBalance },
-        { id: 'zeroBalance', name: '零额', visible: hasBalance },
-        { id: 'noQuota', name: '无额', visible: true },
-        { id: 'rateLimit', name: '限流', visible: true },
-        { id: 'invalid', name: '无效', visible: true },
-        { id: 'duplicate', name: '重复', visible: true },
-    ];
+    return RESULT_TAB_CONFIG.map(tab => ({
+        id: tab.id,
+        name: tab.name,
+        visible: hasBalance || !tab.balanceOnly,
+    }));
 });
 </script>
 

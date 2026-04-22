@@ -41,4 +41,17 @@ export const BUFFER_MAX_SIZE = 50;
  * @description 所有结果类别的枚举。
  * 用于统一管理结果分类，避免字符串重复。
  */
-export const RESULT_CATEGORIES = ['valid', 'lowBalance', 'zeroBalance', 'noQuota', 'rateLimit', 'invalid', 'duplicate'];
+export const RESULT_CATEGORIES = ['valid', 'lowBalance', 'zeroBalance', 'rateLimit', 'invalid', 'duplicate'];
+
+/**
+ * @description 结果标签页配置。
+ * balanceOnly 为 true 时，仅在支持余额的 provider 下显示。
+ */
+export const RESULT_TAB_CONFIG = [
+    { id: 'valid', name: '有效', sortable: true, balanceOnly: false },
+    { id: 'lowBalance', name: '低额', sortable: true, balanceOnly: true },
+    { id: 'zeroBalance', name: '零额', sortable: false, balanceOnly: true },
+    { id: 'rateLimit', name: '限流', sortable: false, balanceOnly: false },
+    { id: 'invalid', name: '无效', sortable: false, balanceOnly: false },
+    { id: 'duplicate', name: '重复', sortable: false, balanceOnly: false },
+];
